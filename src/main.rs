@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use eframe::{
     App,
     egui::{self, ViewportBuilder},
@@ -11,11 +12,56 @@ use std::{
     thread,
 };
 
-static FONT: &[u8] = include_bytes!("../font.ttf"); // 中文字体
-static ICON: &[u8] = include_bytes!("../tlogo.png"); // 应用图标
+static FONT: &[u8] = include_bytes!("../font.ttf");
+static ICON: &[u8] = include_bytes!("../tlogo.png");
+
+/* ======================= 编码表 ======================= */
+/*
+    [0] encoding_rs::Encoding
+    [1] 显示名称
+*/
+type EncodingItem = (&'static Encoding, &'static str);
+
+static ENCODINGS: &[EncodingItem] = &[
+    (UTF_8, "UTF-8"),
+    (UTF_16LE, "UTF-16LE"),
+    (UTF_16BE, "UTF-16BE"),
+    (GBK, "GBK"),
+    (GB18030, "GB18030"),
+    (BIG5, "BIG5"),
+    (SHIFT_JIS, "Shift_JIS"),
+    (EUC_JP, "EUC-JP"),
+    (ISO_2022_JP, "ISO-2022-JP"),
+    (EUC_KR, "EUC-KR"),
+    (WINDOWS_1250, "Windows-1250"),
+    (WINDOWS_1251, "Windows-1251"),
+    (WINDOWS_1252, "Windows-1252"),
+    (WINDOWS_1253, "Windows-1253"),
+    (WINDOWS_1254, "Windows-1254"),
+    (WINDOWS_1255, "Windows-1255"),
+    (WINDOWS_1256, "Windows-1256"),
+    (WINDOWS_1257, "Windows-1257"),
+    (WINDOWS_1258, "Windows-1258"),
+    (ISO_8859_2, "ISO-8859-2"),
+    (ISO_8859_3, "ISO-8859-3"),
+    (ISO_8859_4, "ISO-8859-4"),
+    (ISO_8859_5, "ISO-8859-5"),
+    (ISO_8859_6, "ISO-8859-6"),
+    (ISO_8859_7, "ISO-8859-7"),
+    (ISO_8859_8, "ISO-8859-8"),
+    (ISO_8859_10, "ISO-8859-10"),
+    (ISO_8859_13, "ISO-8859-13"),
+    (ISO_8859_14, "ISO-8859-14"),
+    (ISO_8859_15, "ISO-8859-15"),
+    (ISO_8859_16, "ISO-8859-16"),
+    (MACINTOSH, "Macintosh"),
+    (KOI8_R, "KOI8-R"),
+    (KOI8_U, "KOI8-U"),
+    (IBM866, "IBM866"),
+];
 
 /* ======================= 语言 ======================= */
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 enum Language {
     Zh,
     En,
@@ -24,132 +70,111 @@ enum Language {
 fn t(key: &str, lang: Language) -> &str {
     match lang {
         Language::Zh => match key {
-            "text_mode" => "文本转码",
-            "file_mode" => "文件转码",
+            "text" => "文本转码",
+            "file" => "文件转码",
             "from" => "来源编码",
             "to" => "目标编码",
-            "input_text" => "输入文本",
-            "output_text" => "输出结果",
             "start" => "开始转码",
+            "input" => "输入文本",
+            "output" => "输出结果",
             "select_input" => "选择输入文件",
             "select_output" => "选择输出文件",
-            "status_none" => "暂无状态",
-            "transcoding..." => "正在转码...",
+            "working" => "正在转码...",
+            "idle" => "暂无状态",
             _ => key,
         },
         Language::En => match key {
-            "text_mode" => "Text Transcode",
-            "file_mode" => "File Transcode",
+            "text" => "Text",
+            "file" => "File",
             "from" => "From",
             "to" => "To",
-            "input_text" => "Input Text",
-            "output_text" => "Output Text",
-            "start" => "Start Transcode",
+            "start" => "Start",
+            "input" => "Input Text",
+            "output" => "Output",
             "select_input" => "Select Input File",
             "select_output" => "Select Output File",
-            "status_none" => "No Status",
-            "transcoding..." => "Transcoding...",
+            "working" => "Working...",
+            "idle" => "Idle",
             _ => key,
         },
     }
 }
 
-/* ======================= 数据模型 ======================= */
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum TransMode {
+/* ======================= 模式 ======================= */
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
     Text,
     File,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Encoding {
-    Utf8,
-    Gbk,
-    Big5,
-    Iso88592,
-}
-
-impl Encoding {
-    fn label(self) -> &'static str {
-        match self {
-            Encoding::Utf8 => "UTF-8",
-            Encoding::Gbk => "GBK",
-            Encoding::Big5 => "BIG5",
-            Encoding::Iso88592 => "ISO-8859-2",
-        }
-    }
-
-    fn encoding(self) -> &'static encoding_rs::Encoding {
-        match self {
-            Encoding::Utf8 => UTF_8,
-            Encoding::Gbk => GBK,
-            Encoding::Big5 => BIG5,
-            Encoding::Iso88592 => ISO_8859_2,
-        }
-    }
-}
-
 /* ======================= 转码逻辑 ======================= */
-fn transcode_text(input: &str, from: Encoding, to: Encoding) -> Result<String, String> {
-    let (decoded, _, _) = from.encoding().decode(input.as_bytes());
-    let (encoded, _, _) = to.encoding().encode(&decoded);
-    Ok(String::from_utf8_lossy(&encoded).to_string())
+fn transcode_text(input: &str, from: usize, to: usize) -> String {
+    let (from_enc, _) = ENCODINGS[from];
+    let (to_enc, _) = ENCODINGS[to];
+
+    let (decoded, _, _) = from_enc.decode(input.as_bytes());
+    let (encoded, _, _) = to_enc.encode(&decoded);
+
+    String::from_utf8_lossy(&encoded).to_string()
 }
 
-fn transcode_file(
-    input: &PathBuf,
-    output: &PathBuf,
-    from: Encoding,
-    to: Encoding,
-) -> Result<(), String> {
-    let data = std::fs::read(input).map_err(|e| e.to_string())?;
-    let (decoded, _, _) = from.encoding().decode(&data);
-    let (encoded, _, _) = to.encoding().encode(&decoded);
-    std::fs::write(output, encoded).map_err(|e| e.to_string())?;
-    Ok(())
+fn transcode_file(input: PathBuf, output: PathBuf, from: usize, to: usize) -> String {
+    let data = match std::fs::read(&input) {
+        Ok(v) => v,
+        Err(e) => return e.to_string(),
+    };
+
+    let (from_enc, _) = ENCODINGS[from];
+    let (to_enc, _) = ENCODINGS[to];
+
+    let (decoded, _, _) = from_enc.decode(&data);
+    let (encoded, _, _) = to_enc.encode(&decoded);
+
+    match std::fs::write(&output, encoded) {
+        Ok(_) => format!("Done: {}", output.display()),
+        Err(e) => e.to_string(),
+    }
 }
 
-/* ======================= App 状态 ======================= */
-pub struct CodeTranserApp {
+/* ======================= App ======================= */
+struct CodeTransApp {
     lang: Language,
-    mode: TransMode,
-    from: Encoding,
-    to: Encoding,
+    mode: Mode,
+
+    from_idx: usize,
+    to_idx: usize,
 
     input_text: String,
     output_text: String,
 
     input_file: Option<PathBuf>,
     output_file: Option<PathBuf>,
+
     status: String,
 
-    sender: Option<mpsc::Sender<String>>,
-    receiver: Option<mpsc::Receiver<String>>,
+    rx: Option<mpsc::Receiver<String>>,
 }
 
-impl Default for CodeTranserApp {
+impl Default for CodeTransApp {
     fn default() -> Self {
         Self {
             lang: Language::Zh,
-            mode: TransMode::Text,
-            from: Encoding::Utf8,
-            to: Encoding::Gbk,
+            mode: Mode::Text,
+            from_idx: 0,
+            to_idx: 3, // UTF-8 -> GBK
             input_text: String::new(),
             output_text: String::new(),
             input_file: None,
             output_file: None,
-            status: t("status_none", Language::Zh).to_string(),
-            sender: None,
-            receiver: None,
+            status: t("idle", Language::Zh).into(),
+            rx: None,
         }
     }
 }
 
-/* ======================= UI ======================= */
-impl App for CodeTranserApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl App for CodeTransApp {
+    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            // 语言切换
             ui.horizontal(|ui| {
                 if ui.button("中文").clicked() {
                     self.lang = Language::Zh;
@@ -161,35 +186,32 @@ impl App for CodeTranserApp {
 
             ui.separator();
 
-            // 模式选择
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.mode, TransMode::Text, t("text_mode", self.lang));
-                ui.selectable_value(&mut self.mode, TransMode::File, t("file_mode", self.lang));
+                ui.selectable_value(&mut self.mode, Mode::Text, t("text", self.lang));
+                ui.selectable_value(&mut self.mode, Mode::File, t("file", self.lang));
             });
 
             ui.separator();
 
-            // 编码选择
             ui.horizontal(|ui| {
                 ui.label(t("from", self.lang));
-                encoding_combo(ui, "from", &mut self.from);
+                encoding_combo(ui, "from", &mut self.from_idx);
                 ui.label(t("to", self.lang));
-                encoding_combo(ui, "to", &mut self.to);
+                encoding_combo(ui, "to", &mut self.to_idx);
             });
 
             ui.separator();
 
             match self.mode {
-                TransMode::Text => self.ui_text_mode(ui),
-                TransMode::File => self.ui_file_mode(ui),
+                Mode::Text => self.ui_text(ui),
+                Mode::File => self.ui_file(ui),
             }
 
-            // 异步结果检查
-            if let Some(rx) = &self.receiver {
-                if let Ok(res) = rx.try_recv() {
+            if let Some(rx) = &self.rx {
+                if let Ok(msg) = rx.try_recv() {
                     match self.mode {
-                        TransMode::Text => self.output_text = res,
-                        TransMode::File => self.status = res,
+                        Mode::Text => self.output_text = msg,
+                        Mode::File => self.status = msg,
                     }
                 }
             }
@@ -197,67 +219,48 @@ impl App for CodeTranserApp {
     }
 }
 
-/* ======================= 子 UI ======================= */
-impl CodeTranserApp {
-    fn ui_text_mode(&mut self, ui: &mut egui::Ui) {
-        ui.label(t("input_text", self.lang));
+/* ======================= UI ======================= */
+impl CodeTransApp {
+    fn ui_text(&mut self, ui: &mut egui::Ui) {
+        ui.label(t("input", self.lang));
         ui.text_edit_multiline(&mut self.input_text);
 
         if ui.button(t("start", self.lang)).clicked() {
-            let input = self.input_text.clone();
-            let from = self.from;
-            let to = self.to;
             let (tx, rx) = mpsc::channel();
-            self.sender = Some(tx.clone());
-            self.receiver = Some(rx);
+            let input = self.input_text.clone();
+            let from = self.from_idx;
+            let to = self.to_idx;
+            self.rx = Some(rx);
 
             thread::spawn(move || {
-                let out = transcode_text(&input, from, to).unwrap_or_else(|e| e);
-                tx.send(out).ok();
+                tx.send(transcode_text(&input, from, to)).ok();
             });
         }
 
         ui.separator();
-        ui.label(t("output_text", self.lang));
+        ui.label(t("output", self.lang));
         ui.text_edit_multiline(&mut self.output_text);
     }
 
-    fn ui_file_mode(&mut self, ui: &mut egui::Ui) {
+    fn ui_file(&mut self, ui: &mut egui::Ui) {
         if ui.button(t("select_input", self.lang)).clicked() {
             self.input_file = rfd::FileDialog::new().pick_file();
         }
-        if let Some(path) = &self.input_file {
-            ui.label(format!("Input: {}", path.display()));
-        }
-
         if ui.button(t("select_output", self.lang)).clicked() {
-            self.output_file = rfd::FileDialog::new()
-                .set_file_name("output.txt")
-                .save_file();
-        }
-        if let Some(path) = &self.output_file {
-            ui.label(format!("Output: {}", path.display()));
+            self.output_file = rfd::FileDialog::new().save_file();
         }
 
         if ui.button(t("start", self.lang)).clicked() {
-            if let (Some(input), Some(output)) = (&self.input_file, &self.output_file) {
-                self.status = t("transcoding...", self.lang).to_string();
-                let input = input.clone();
-                let output = output.clone();
-                let from = self.from;
-                let to = self.to;
+            if let (Some(i), Some(o)) = (self.input_file.clone(), self.output_file.clone()) {
+                self.status = t("working", self.lang).into();
                 let (tx, rx) = mpsc::channel();
-                self.sender = Some(tx.clone());
-                self.receiver = Some(rx);
+                let from = self.from_idx;
+                let to = self.to_idx;
+                self.rx = Some(rx);
 
                 thread::spawn(move || {
-                    let res = transcode_file(&input, &output, from, to)
-                        .map(|_| format!("Transcode finished: {}", output.display()))
-                        .unwrap_or_else(|e| format!("Error: {}", e));
-                    tx.send(res).ok();
+                    tx.send(transcode_file(i, o, from, to)).ok();
                 });
-            } else {
-                self.status = "Please select input and output files".to_string();
             }
         }
 
@@ -266,57 +269,51 @@ impl CodeTranserApp {
     }
 }
 
-/* ======================= 编码选择 ======================= */
-fn encoding_combo(ui: &mut egui::Ui, id: &str, value: &mut Encoding) {
+/* ======================= 编码下拉 ======================= */
+fn encoding_combo(ui: &mut egui::Ui, id: &str, value: &mut usize) {
     egui::ComboBox::from_id_salt(id)
-        .selected_text(value.label())
+        .selected_text(ENCODINGS[*value].1)
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, Encoding::Utf8, "UTF-8");
-            ui.selectable_value(value, Encoding::Gbk, "GBK");
-            ui.selectable_value(value, Encoding::Big5, "BIG5");
-            ui.selectable_value(value, Encoding::Iso88592, "ISO-8859-2");
+            for (i, (_, label)) in ENCODINGS.iter().enumerate() {
+                ui.selectable_value(value, i, *label);
+            }
         });
 }
 
-/* ======================= 中文字体 ======================= */
+/* ======================= 字体 ======================= */
 fn setup_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-
-    fonts.font_data.insert(
-        "cjk".to_owned(),
-        Arc::new(egui::FontData::from_static(FONT)),
-    );
-
+    fonts
+        .font_data
+        .insert("cjk".into(), Arc::new(egui::FontData::from_static(FONT)));
     fonts
         .families
         .get_mut(&egui::FontFamily::Proportional)
         .unwrap()
-        .insert(0, "cjk".to_owned());
-
+        .insert(0, "cjk".into());
     fonts
         .families
         .get_mut(&egui::FontFamily::Monospace)
         .unwrap()
-        .insert(0, "cjk".to_owned());
-
+        .insert(0, "cjk".into());
     ctx.set_fonts(fonts);
 }
 
 /* ======================= main ======================= */
-
 fn main() -> Result<(), eframe::Error> {
-    let icon = from_png_bytes(ICON).expect("icon err");
-    let native_options = eframe::NativeOptions {
+    let icon = from_png_bytes(ICON).unwrap();
+
+    let opts = eframe::NativeOptions {
         viewport: ViewportBuilder::default().with_icon(icon),
         ..Default::default()
     };
 
     eframe::run_native(
-        "EncodeConventer",
-        native_options,
+        "EncodeConverter",
+        opts,
         Box::new(|cc| {
             setup_fonts(&cc.egui_ctx);
-            Ok(Box::new(CodeTranserApp::default()))
+            Ok(Box::new(CodeTransApp::default()))
         }),
     )
 }
